@@ -11,6 +11,12 @@ from sklearn.neighbors import KDTree
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
+from mpi4py import MPI
+
+comm = MPI.COMM_WORLD
+number_of_workers=comm.Get_size()
+rank = comm.Get_rank()
+
 
 ############################
 # Supporting classes
@@ -160,7 +166,6 @@ class LESSRegressor(RegressorMixin, BaseEstimator, SklearnEstimator):
         Checks whether the input is valid,
         where len_X is the length of input data
         '''
-
         if (self.cluster_method_ == None):
             
             if (self.frac_ != None):
@@ -212,7 +217,6 @@ class LESSRegressor(RegressorMixin, BaseEstimator, SklearnEstimator):
         
         # Check that X and y have correct shape
         X, y = check_X_y(X, y)
-        
         if (self.val_size_ != None):
             # Validation set is not used for
             # global estimation
@@ -232,6 +236,122 @@ class LESSRegressor(RegressorMixin, BaseEstimator, SklearnEstimator):
         
         return self
 
+    def _fit_helper(self,X,y,neighbor_indices_list, Xval = None):
+        if rank < ((self.n_subsets_) % number_of_workers):
+            start = rank * (int((self.n_subsets_/number_of_workers))+1)
+            stop = start + int((self.n_subsets_/number_of_workers))
+        else:
+            start = (rank * int((self.n_subsets_/number_of_workers))) + (self.n_subsets_ % number_of_workers)
+            stop = start + int((self.n_subsets_/number_of_workers)) - 1
+        my_chunk_len = stop-start+1
+        if Xval is None:
+            predicts = np.zeros((len(X),my_chunk_len))
+            dists = np.zeros((len(X),my_chunk_len))
+        else:
+            predicts = np.zeros((len(Xval),my_chunk_len))
+            dists = np.zeros((len(Xval),my_chunk_len))
+            
+
+        local_models: List[LocalModelR] = [None for i in range(my_chunk_len)]
+        
+        for job_index in range(start,stop+1):
+            neighbor_i = job_index
+            neighbor_indices = neighbor_indices_list[job_index]
+            Xneighbors, yneighbors = X[neighbor_indices], y[neighbor_indices]
+            local_center = np.mean(Xneighbors, axis=0)
+            if ('random_state' in self.local_estimator_().get_params().keys()):
+                local_model = self.local_estimator_().\
+                    set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
+                        fit(Xneighbors, yneighbors)
+            else:
+                local_model = self.local_estimator_().fit(Xneighbors, yneighbors)
+            local_models[job_index - start] = (LocalModelR(estimator=local_model, center=local_center))
+            if Xval is None:
+                predicts[:, job_index - start] = local_model.predict(X)
+            else:
+                predicts[:, job_index - start] = local_model.predict(Xval)
+                
+            if(self.distance_function_ == None):
+                if(Xval is None):
+                    dists[:, job_index - start] = rbf(X, local_center, \
+                        coeff=1.0/np.power(self.n_subsets_, 2.0))
+                else:
+                    dists[:, job_index - start] = rbf(Xval, local_center, \
+                        coeff=1.0/np.power(self.n_subsets_, 2.0))
+            else:
+                if(Xval is None):
+                    dists[:, job_index - start] = self.distance_function(X, local_center)
+                else:
+                    dists[:, job_index - start] = self.distance_function(Xval, local_center)
+                  
+
+        local_models_gathered = comm.gather(local_models, root=0)
+        dists_gathered = comm.gather(dists, root=0)
+        predicts_gathered = comm.gather(predicts, root=0)
+        if(rank == 0):
+            dists_gathered = (np.concatenate(dists_gathered, axis=1))
+            local_models_gathered = [localmodel for localmodels in local_models_gathered for localmodel in localmodels]
+            predicts_gathered = np.concatenate(predicts_gathered, axis=1)
+        return [predicts_gathered, dists_gathered, local_models_gathered]
+
+    def _fit_helperc(self,X,y,cluster_fit_labels, Xval = None):
+        if rank < ((self.n_subsets_) % number_of_workers):
+            start = rank * (int((self.n_subsets_/number_of_workers))+1)
+            stop = start + int((self.n_subsets_/number_of_workers))
+        else:
+            start = (rank * int((self.n_subsets_/number_of_workers))) + (self.n_subsets_ % number_of_workers)
+            stop = start + int((self.n_subsets_/number_of_workers)) - 1
+        my_chunk_len = stop-start+1
+        if Xval is None:
+            predicts = np.zeros((len(X),my_chunk_len))
+            dists = np.zeros((len(X),my_chunk_len))
+        else:
+            predicts = np.zeros((len(Xval),my_chunk_len))
+            dists = np.zeros((len(Xval),my_chunk_len))
+            
+
+        local_models: List[LocalModelR] = [None for i in range(my_chunk_len)]
+        
+        for job_index in range(start,stop+1):
+            neighbor_i = job_index
+            ## TODO(kaya) : fix here : understand cluster indexing
+            neighbor_indices = cluster_fit_labels[job_index]
+            Xneighbors, yneighbors = X[neighbor_indices], y[neighbor_indices]
+            local_center = np.mean(Xneighbors, axis=0)
+            if ('random_state' in self.local_estimator_().get_params().keys()):
+                local_model = self.local_estimator_().\
+                    set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
+                        fit(Xneighbors, yneighbors)
+            else:
+                local_model = self.local_estimator_().fit(Xneighbors, yneighbors)
+            local_models[job_index - start] = (LocalModelR(estimator=local_model, center=local_center))
+            if Xval is None:
+                predicts[:, job_index - start] = local_model.predict(X)
+            else:
+                predicts[:, job_index - start] = local_model.predict(Xval)
+                
+            if(self.distance_function_ == None):
+                if(Xval is None):
+                    dists[:, job_index - start] = rbf(X, local_center, \
+                        coeff=1.0/np.power(self.n_subsets_, 2.0))
+                else:
+                    dists[:, job_index - start] = rbf(Xval, local_center, \
+                        coeff=1.0/np.power(self.n_subsets_, 2.0))
+            else:
+                if(Xval is None):
+                    dists[:, job_index - start] = self.distance_function(X, local_center)
+                else:
+                    dists[:, job_index - start] = self.distance_function(Xval, local_center)
+                  
+
+        local_models_gathered = comm.gather(local_models, root=0)
+        dists_gathered = comm.gather(dists, root=0)
+        predicts_gathered = comm.gather(predicts, root=0)
+        if(rank == 0):
+            dists_gathered = (np.concatenate(dists_gathered, axis=1))
+            local_models_gathered = [localmodel for localmodels in local_models_gathered for localmodel in localmodels]
+            predicts_gathered = np.concatenate(predicts_gathered, axis=1)
+        return [predicts_gathered, dists_gathered, local_models_gathered]
     def _fitnoval(self, X: np.array, y: np.array):
         '''
         Fit function: All data is used for global estimator (no validation)
@@ -245,47 +365,34 @@ class LESSRegressor(RegressorMixin, BaseEstimator, SklearnEstimator):
         tree = self.tree_method_(X, self.n_subsets_)
         self.replications_ = []
         for i in range(self.n_replications_):
-            # Select n_subsets many samples to construct the local sample sets
-            sample_indices = self.rng_.choice(len_X, size=self.n_subsets_)
-            # Construct the local sample sets
-            _, neighbor_indices_list = tree.query(X[sample_indices], k=self.n_neighbors_)
+            if rank == 0:
+                # Select n_subsets many samples to construct the local sample sets
+                sample_indices = self.rng_.choice(len_X, size=self.n_subsets_)
+                # Construct the local sample sets
+                _, neighbor_indices_list = np.array(tree.query(X[sample_indices], k=self.n_neighbors_), dtype = 'i')
+            else:
+                neighbor_indices_list = np.zeros([self.n_subsets_, self.n_neighbors_],dtype='i')
+            comm.Bcast(neighbor_indices_list, root=0)
             local_models: List[LocalModelR] = []
             dists = np.zeros((len_X, self.n_subsets_))            
             predicts = np.zeros((len_X, self.n_subsets_))
-            for neighbor_i, neighbor_indices in enumerate(neighbor_indices_list):
-                Xneighbors, yneighbors = X[neighbor_indices], y[neighbor_indices]
-                # Centroid is used as the center of the local sample set
-                local_center = np.mean(Xneighbors, axis=0)
-                if ('random_state' in self.local_estimator_().get_params().keys()):
-                    local_model = self.local_estimator_().\
-                        set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
-                            fit(Xneighbors, yneighbors)
-                else:
-                    local_model = self.local_estimator_().fit(Xneighbors, yneighbors)
-                local_models.append(LocalModelR(estimator=local_model, center=local_center))
-                predicts[:, neighbor_i] = local_model.predict(X)
-                
-                if (self.distance_function_ == None):
-                    dists[:, neighbor_i] = rbf(X, local_center, \
-                        coeff=1.0/np.power(self.n_subsets_, 2.0))
-                else:
-                    dists[:, neighbor_i] = self.distance_function_(X, local_center)
-
-            # Normalize the distances from each sample to the local subsets
-            if (self.d_normalize_):
-                dists = (dists.T/np.sum(dists, axis=1)).T
+            [predicts,dists,local_models] = self._fit_helper(X,y,neighbor_indices_list)
+            if rank == 0:
+                # Normalize the distances from each sample to the local subsets
+                if (self.d_normalize_):
+                    dists = (dists.T/np.sum(dists, axis=1)).T
             
-            if (self.global_estimator_ != None):
-                if ('random_state' in self.global_estimator_().get_params().keys()):
-                    global_model = self.global_estimator_().\
-                        set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
-                        fit(dists * predicts, y)
+                if (self.global_estimator_ != None):
+                    if ('random_state' in self.global_estimator_().get_params().keys()):
+                        global_model = self.global_estimator_().\
+                            set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
+                                fit(dists * predicts, y)
+                    else:
+                        global_model = self.global_estimator_().fit(dists * predicts, y)
                 else:
-                    global_model = self.global_estimator_().fit(dists * predicts, y)
-            else:
-                global_model = None
+                    global_model = None
 
-            self.replications_.append(ReplicationR(global_model, local_models))
+                self.replications_.append(ReplicationR(global_model, local_models))
 
         return self
 
@@ -298,61 +405,61 @@ class LESSRegressor(RegressorMixin, BaseEstimator, SklearnEstimator):
 
         self.replications_ = []
         for i in range(self.n_replications_):
-            # Split for global estimation
-            X_train, X_val, y_train, y_val = train_test_split(X, y,
-                test_size=self.val_size_,
-                random_state=self.rng_.integers(np.iinfo(np.int16).max))
-
+            if rank ==0:
+                # Split for global estimation
+                X_train, X_val, y_train, y_val = train_test_split(X, y,
+                    test_size=self.val_size_,
+                    random_state=self.rng_.integers(np.iinfo(np.int16).max))
+            else:
+                len_x_val = int(len(X) * self.val_size_)
+                len_y_val = int(len(y) * self.val_size_)
+                len_x_train = int(len(X) * (1-self.val_size_))
+                len_y_train = int(len(y) * (1-self.val_size_))
+                X_train = np.empty((len_x_train,X[0].shape[0]))
+                y_train = np.empty(len_y_train)
+                X_val = np.empty((len_x_val,X[0].shape[0]))
+                y_val = np.empty(len_y_val)
+            
+            X_train = comm.bcast(X_train, root=0)
+            X_val = comm.bcast(X_val, root=0)
+            y_train = comm.bcast(y_train, root=0)
+            y_val = comm.bcast(y_val,root=0)  
             len_X_val: int = len(X_val)
             len_X_train: int = len(X_train)
             # Check the validity of the input
             if (i==0):
                 self._check_input(len_X_train)
+            if rank == 0: 
+                # A nearest neighbor tree is grown for querying
+                tree = self.tree_method_(X_train, self.n_subsets_)
             
-            # A nearest neighbor tree is grown for querying
-            tree = self.tree_method_(X_train, self.n_subsets_)
-            
-            # Select n_subsets many samples to construct the local sample sets
-            sample_indices = self.rng_.choice(len_X_train, size=self.n_subsets_)
-            # Construct the local sample sets
-            _, neighbor_indices_list = tree.query(X_train[sample_indices], k=self.n_neighbors_)
+                # Select n_subsets many samples to construct the local sample sets
+                sample_indices = self.rng_.choice(len_X_train, size=self.n_subsets_)
+                # Construct the local sample sets
+                _, neighbor_indices_list = np.array(tree.query(X_train[sample_indices], k=self.n_neighbors_), dtype='i')
+            else:
+                neighbor_indices_list = np.zeros([self.n_subsets_, self.n_neighbors_], dtype = 'i')
+            comm.Bcast(neighbor_indices_list, root=0)
             local_models: List[LocalModelR] = []
             dists = np.zeros((len_X_val, self.n_subsets_))            
             predicts = np.zeros((len_X_val, self.n_subsets_))
-            for neighbor_i, neighbor_indices in enumerate(neighbor_indices_list):
-                Xneighbors, yneighbors = X_train[neighbor_indices], y_train[neighbor_indices]
-                # Centroid is used as the center of the local sample set
-                local_center = np.mean(Xneighbors, axis=0)
-                if ('random_state' in self.local_estimator_().get_params().keys()):
-                    local_model = self.local_estimator_().\
-                        set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
-                            fit(Xneighbors, yneighbors)
-                else:                
-                    local_model = self.local_estimator_().fit(Xneighbors, yneighbors)
-                local_models.append(LocalModelR(estimator=local_model, center=local_center))
-                predicts[:, neighbor_i] = local_model.predict(X_val)
-                
-                if (self.distance_function_ == None):
-                    dists[:, neighbor_i] = rbf(X_val, local_center, \
-                        coeff=1.0/np.power(self.n_subsets_, 2.0))
-                else:
-                    dists[:, neighbor_i] = self.distance_function_(X_val, local_center)
-
-            # Normalize the distances from each sample to the local subsets
-            if (self.d_normalize_):
-                dists = (dists.T/np.sum(dists, axis=1)).T
+            [predicts,dists,local_models] = self._fit_helper(X_train,y_train,neighbor_indices_list,X_val)
+            if rank == 0:
+                # Normalize the distances from each sample to the local subsets
+                if (self.d_normalize_):
+                    dists = (dists.T/np.sum(dists, axis=1)).T
             
-            if (self.global_estimator_ != None):
-                if ('random_state' in self.global_estimator_().get_params().keys()):
-                    global_model = self.global_estimator_().\
-                        set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
-                            fit(dists * predicts, y_val)
+                if (self.global_estimator_ != None):
+                    if ('random_state' in self.global_estimator_().get_params().keys()):
+                        global_model = self.global_estimator_().\
+                            set_params(random_state=self.rng_.integers(np.iinfo(np.int16).max)).\
+                                fit(dists * predicts, y_val)
+                    else:
+                        global_model = self.global_estimator_().fit(dists * predicts, y_val)
                 else:
-                    global_model = self.global_estimator_().fit(dists * predicts, y_val)
-            else:
-                global_model = None
+                     global_model = None
 
-            self.replications_.append(ReplicationR(global_model, local_models))
+                self.replications_.append(ReplicationR(global_model, local_models))
 
         return self
 
