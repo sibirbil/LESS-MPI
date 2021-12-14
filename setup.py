@@ -10,6 +10,6 @@ setup(name='LESS-MPI',
       packages=['less-learn-mpi'],
       zip_safe=False,
       install_requires=[
-        'mpi4py>=3.0.0'
+        'mpi4py>=3.0.0',
         'scikit-learn>=1.0.1'
       ]),
