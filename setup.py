@@ -2,8 +2,8 @@ from setuptools import setup
 
 setup(name='LESS',
       version='0.1.0',
-      description='Learning with Subset Stacking',
-      url='git@github.com:sibirbil/LESS.git',
+      description='Learning with Subset Stacking - MPI',
+      url='git@github.com:sibirbil/LESS-MPI.git',
       maintainer='Ilker Birbil',
       maintainer_email='s.i.birbil@uva.nl',
       license='MIT',
