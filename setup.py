@@ -3,8 +3,6 @@ from setuptools import setup
 setup(name='less-learn-mpi',
       version='0.1.0',
       description='Learning with Subset Stacking - MPI',
-      long_description=long_description,
-      long_description_content_type="text/markdown",
       url='https://github.com/sibirbil/LESS-MPI',
       maintainer='Kaya Gokalp',
       maintainer_email='kayagokalp@sabanciuniv.edu',
