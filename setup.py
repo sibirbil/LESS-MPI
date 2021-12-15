@@ -7,7 +7,7 @@ setup(name='less-learn-mpi',
       maintainer='Kaya Gokalp',
       maintainer_email='kayagokalp@sabanciuniv.edu',
       license='MIT',
-      packages=['less'],
+      packages=['lessmpi'],
       zip_safe=False,
       python_requires='>=3.6',
       install_requires=[
