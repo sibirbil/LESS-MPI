@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='less-learn-mpi',
-      version='0.1.0',
+      version='0.1.1',
       description='Learning with Subset Stacking - MPI',
       url='https://github.com/sibirbil/LESS-MPI',
       maintainer='Kaya Gokalp',
