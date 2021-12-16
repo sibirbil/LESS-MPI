@@ -10,7 +10,7 @@ The serial version of LESS is given in our [main repository](https://github.com/
 
 ## Example
 
-In folder 'example', we also provide a simple script for testing. You can run this script for two threads by typing
+In folder _example_, we also provide a simple script for testing. You can run this script for two threads by typing
 
 `mpirun -n 2 python3 less-mpi-example.py`
 
