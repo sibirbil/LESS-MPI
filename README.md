@@ -1,11 +1,8 @@
-# # Learning with Subset Stacking (LESS) MPI Version
+# Learning with Subset Stacking (LESS) MPI Version
 
-LESS is a new supervised learning algorithm that is based on training many local estimators on subsets of a given dataset, and then passing their predictions to a global estimator.
-You can find the details about LESS in our [manuscript](https://arxiv.org/abs/2112.06251).
+LESS is a new supervised learning algorithm that is based on training many local estimators on subsets of a given dataset, and then passing their predictions to a global estimator. You can find the details about LESS in our [manuscript](https://arxiv.org/abs/2112.06251).
 
-Also see https://github.com/sibirbil/LESS for main repo.
-
-This verison of LESS relies on MPI for the parallelization of local models. To do so mpi4py was used and to be able to install less-learn-mpi you will need to have an mpi library installed. We used openmpi in our testing environments.
+The serial version of LESS is given our [main repository](https://github.com/sibirbil/LESS). This version of LESS relies on MPI for the parallelization of local models. To use this version, `mpi4py` is used. To use `less-learn-mpi`, you need to **install an mpi library**. We have used `openmpi` in our testing environments.
 
 ## Installation
 
@@ -19,9 +16,10 @@ To run the example you can use
 
 `mpirun -n 2 python3 less-mpi-example.py`
 
-whicih will run the script with 2 threads.
+whicih will run the script with two threads.
 
 Note that this example requires pandas which can be installed with `pip install pandas`
+
 ## Citation
 Our software can be cited as:
 ````
